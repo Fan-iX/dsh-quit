@@ -41,6 +41,9 @@ window.__ModuleLoader__.load({
     /** How long the page waits for the instance to leave before reloading into a new one. */
     var RELOAD_AFTER_MS = 3000
 
+    /** How long the quit confirmation waits before dismissing itself untouched. */
+    var CONFIRM_WINDOW_MS = 5000
+
     /** The theme's error colour, so the quit action reads as destructive without hardcoding a palette. */
     var DANGER_COLOR = 'var(--dsw-alias-state-error-primary, #ec1313)'
 
@@ -67,7 +70,8 @@ window.__ModuleLoader__.load({
       quitTitle: 'Quit this instance',
       quitBody: 'The instance exits. Unsaved work in running tasks is lost.',
       quit: 'Quit',
-      quitConfirm: 'Quit this instance? Running tasks will be lost.',
+      quitDialogTitle: 'Quit this instance?',
+      quitDialogBody: 'The instance exits. Unsaved work in running tasks is lost.',
       quitConfirmAction: 'Quit',
       cancel: 'Cancel',
       closing: 'Quitting…',
@@ -93,7 +97,8 @@ window.__ModuleLoader__.load({
       quitTitle: '退出当前实例',
       quitBody: '实例会退出。正在运行的任务中未保存的内容会丢失。',
       quit: '退出',
-      quitConfirm: '要退出当前实例吗？正在运行的任务会丢失。',
+      quitDialogTitle: '要退出当前实例吗？',
+      quitDialogBody: '实例会退出。正在运行的任务中未保存的内容会丢失。',
       quitConfirmAction: '确认退出',
       cancel: '取消',
       closing: '正在退出…',
@@ -133,6 +138,7 @@ window.__ModuleLoader__.load({
         open: false,
         keep: { phase: 'loading', keepAlive: false, busy: false, failed: false },
         quit: 'idle',
+        confirmOpen: false,
       })
       var current = state[0]
       var setCurrent = state[1]
@@ -168,6 +174,13 @@ window.__ModuleLoader__.load({
         return undefined
       }, [current.open])
 
+      // An unanswered confirmation must not sit over the page forever.
+      react.useEffect(function () {
+        if (!current.confirmOpen) return undefined
+        var timer = setTimeout(function () { update({ confirmOpen: false }) }, CONFIRM_WINDOW_MS)
+        return function () { clearTimeout(timer) }
+      }, [current.confirmOpen])
+
       var toggle = function (next) {
         updateKeep({ busy: true, failed: false })
         fetch(KEEPALIVE_PATH, {
@@ -201,11 +214,13 @@ window.__ModuleLoader__.load({
             setTimeout(function () { window.location.reload() }, RELOAD_AFTER_MS)
           })
           .catch(function (error) {
-            update({ quit: error && error.refused === true ? 'denied' : 'failed' })
+            update({ quit: error && error.refused === true ? 'denied' : 'failed', confirmOpen: false })
           })
       }
 
-      var close = function () { update({ open: false, quit: 'idle' }) }
+      var openConfirm = function () { update({ confirmOpen: true, quit: 'idle' }) }
+      var cancelConfirm = function () { update({ confirmOpen: false }) }
+      var close = function () { update({ open: false, quit: 'idle', confirmOpen: false }) }
       var open = function () { update({ open: true }) }
 
       var keep = current.keep
@@ -235,60 +250,30 @@ window.__ModuleLoader__.load({
           : null,
       ] })
 
-      var quitSection
-      if (current.quit === 'confirm') {
-        quitSection = jsxs('div', { style: section, children: [
-          jsx('div', { style: titleStyle, children: t('quitTitle') }),
-          jsx('div', { style: bodyStyle, children: t('quitConfirm') }),
-          jsxs('div', { style: { display: 'flex', gap: '8px' }, children: [
-            jsx(primitives.Button, {
-              variant: 'ghost',
-              size: 'sm',
-              onClick: function () { update({ quit: 'idle' }) },
-              children: t('cancel'),
-            }),
-            jsx(primitives.Button, {
-              variant: 'primary',
-              size: 'sm',
-              onClick: quit,
-              children: t('quitConfirmAction'),
-            }),
-          ] }),
-        ] })
-      } else if (current.quit === 'closing') {
-        quitSection = jsxs('div', { style: section, children: [
-          jsx('div', { style: titleStyle, children: t('quitTitle') }),
-          jsx('div', { style: bodyStyle, children: t('closing') }),
-        ] })
-      } else if (current.quit === 'denied') {
-        quitSection = jsxs('div', { style: section, children: [
-          jsx('div', { style: titleStyle, children: t('quitTitle') }),
-          jsx('div', { style: bodyStyle, children: t('denied') }),
-          jsx(primitives.Button, {
+      var quitSection = jsxs('div', { style: section, children: [
+        jsx('div', { style: titleStyle, children: t('quitTitle') }),
+        jsx('div', { style: bodyStyle, children: current.quit === 'denied' ? t('denied') : t('quitBody') }),
+        current.quit === 'failed' ? jsx('div', { style: bodyStyle, children: t('quitFailed') }) : null,
+        current.quit === 'closing' ? jsx('div', { style: bodyStyle, children: t('closing') }) : null,
+        current.quit === 'denied'
+          ? jsx(primitives.Button, {
             variant: 'primary',
             size: 'sm',
             onClick: function () { window.location.reload() },
             children: t('reload'),
-          }),
-        ] })
-      } else {
-        var failed = current.quit === 'failed'
-        quitSection = jsxs('div', { style: section, children: [
-          jsx('div', { style: titleStyle, children: t('quitTitle') }),
-          jsx('div', { style: bodyStyle, children: t('quitBody') }),
-          failed ? jsx('div', { style: bodyStyle, children: t('quitFailed') }) : null,
-          jsx(primitives.Button, {
+          })
+          : jsx(primitives.Button, {
             variant: 'primary',
             size: 'sm',
+            disabled: current.quit === 'closing',
             icon: jsx('span', {
               style: { display: 'inline-flex', color: DANGER_COLOR },
               children: jsx(primitives.IconStopFillRegular, {}),
             }),
-            onClick: function () { update({ quit: 'confirm' }) },
-            children: failed ? t('retry') : t('quit'),
+            onClick: openConfirm,
+            children: current.quit === 'failed' ? t('retry') : t('quit'),
           }),
-        ] })
-      }
+      ] })
 
       var button = jsx(primitives.Button, {
         key: 'action',
@@ -315,7 +300,27 @@ window.__ModuleLoader__.load({
           quitSection,
         ] }),
       })
-      return jsxs(jsxRuntime.Fragment, { children: [button, panel] })
+      // A second dialog on top of the panel; the modal layer stacks it, gives it
+      // Escape and focus, and returns focus to the panel when it closes.
+      var confirmDialog = jsxs(primitives.Modal, {
+        key: 'quit-confirm',
+        open: current.confirmOpen,
+        onClose: cancelConfirm,
+        title: t('quitDialogTitle'),
+        description: t('quitDialogBody'),
+        closeLabel: t('cancel'),
+        footer: [
+          jsx(primitives.Button, { key: 'cancel', variant: 'ghost', onClick: cancelConfirm, children: t('cancel') }),
+          jsx(primitives.Button, {
+            key: 'confirm',
+            variant: 'primary',
+            disabled: current.quit === 'closing',
+            onClick: quit,
+            children: current.quit === 'closing' ? t('closing') : t('quitConfirmAction'),
+          }),
+        ],
+      })
+      return jsxs(jsxRuntime.Fragment, { children: [button, panel, confirmDialog] })
     }
 
     /**

@@ -1,6 +1,7 @@
 // Tests for dsh-hub-utils: the host half's quit route, the browser half's
-// sidebar action, and the panel's keep-alive and quit exchanges. The host half
-// imports nothing, so this suite needs no SDK link.
+// sidebar action, and the panel's keep-alive and quit exchanges (including the
+// quit confirmation stacked on top of the panel). The host half imports
+// nothing, so this suite needs no SDK link.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -163,6 +164,7 @@ const baseState = () => ({
   open: false,
   keep: { phase: 'loading', keepAlive: false, busy: false, failed: false },
   quit: 'idle',
+  confirmOpen: false,
 })
 
 const readyKeep = (keepAlive) => ({ phase: 'ready', keepAlive, busy: false, failed: false })
@@ -232,6 +234,9 @@ const text = (tree) => {
   return parts.join(' ')
 }
 
+/** The panel dialog and the quit confirmation stacked above it. */
+const dialogs = (tree) => findAll(tree, 'Modal')
+
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 test('the manifest declares a web client half alongside the host half', () => {
@@ -288,9 +293,9 @@ test('the action shows the panel icon, its label only when wide, and opens the p
 })
 
 test('the panel carries the keep-alive and quit controls', () => {
-  const { render } = mountAction({ open: true, keep: readyKeep(true), quit: 'idle' })
+  const { render } = mountAction({ ...baseState(), open: true, keep: readyKeep(true) })
   const tree = render()
-  const panel = find(tree, 'Modal')
+  const panel = dialogs(tree)[0]
   assert.equal(panel.props.open, true)
   assert.equal(panel.props.title, 'panelTitle')
   assert.equal(find(tree, 'Switch').props.checked, true)
@@ -309,7 +314,7 @@ test('the keep-alive switch posts the opposite state as JSON', async () => {
       json: () => Promise.resolve({ keepAlive: true, running: true }),
     })
   }
-  const { render, hooks } = mountAction({ open: true, keep: readyKeep(false), quit: 'idle' })
+  const { render, hooks } = mountAction({ ...baseState(), open: true, keep: readyKeep(false) })
   find(render(), 'Switch').props.onChange(true)
   await tick()
 
@@ -331,12 +336,11 @@ test('opening the panel reads the keep-alive state from the hub', async () => {
       json: () => Promise.resolve({ keepAlive: true, running: true }),
     })
   }
-  const initial = { open: true, keep: baseState().keep, quit: 'idle' }
-  const { render, hooks } = mountAction(initial)
+  const { render, hooks } = mountAction({ ...baseState(), open: true })
   render()
-  const effect = hooks.seen.effects.find((entry) => Array.isArray(entry.deps) && entry.deps[0] === true)
-  assert.ok(effect, 'opening must schedule a read')
-  effect.fn()
+  const loads = hooks.seen.effects.filter((entry) => Array.isArray(entry.deps) && entry.deps[0] === true)
+  assert.ok(loads.length > 0, 'opening must schedule a read')
+  loads[0].fn()
   await tick()
 
   assert.equal(calls[0].url, '/hub/api/keepalive')
@@ -346,14 +350,54 @@ test('opening the panel reads the keep-alive state from the hub', async () => {
 })
 
 test('outside dsh-hub the keep-alive row says so, but the quit action stays', () => {
-  const { render } = mountAction({ open: true, keep: { phase: 'unsupported', keepAlive: false, busy: false, failed: false }, quit: 'idle' })
+  const state = { ...baseState(), open: true, keep: { phase: 'unsupported', keepAlive: false, busy: false, failed: false } }
+  const { render } = mountAction(state)
   const tree = render()
   assert.equal(find(tree, 'Switch'), undefined)
   assert.match(text(tree), /unsupported/)
   assert.ok(button(tree, 'quit'))
 })
 
-test('quitting asks once inline, then posts the quit request', async () => {
+test('the quit action opens a second dialog stacked above the panel', () => {
+  const { render, hooks } = mountAction({ ...baseState(), open: true, keep: readyKeep(false) })
+  button(render(), 'quit').props.onClick()
+  assert.equal(hooks.seen.state.confirmOpen, true)
+
+  const stack = dialogs(render())
+  assert.equal(stack.length, 2, 'the confirmation is a second dialog, not an inline row')
+  assert.equal(stack[0].props.open, true, 'the panel stays open underneath')
+  assert.equal(stack[1].props.open, true)
+  assert.equal(stack[1].props.title, 'quitDialogTitle')
+  assert.equal(stack[1].props.description, 'quitDialogBody')
+  const [cancel, confirm] = stack[1].props.footer
+  assert.equal(cancel.props.children, 'cancel')
+  assert.equal(confirm.props.children, 'quitConfirmAction')
+})
+
+test('cancelling or Escape on the confirmation leaves the panel untouched', () => {
+  const { render, hooks } = mountAction({ ...baseState(), open: true, keep: readyKeep(false), confirmOpen: true })
+  dialogs(render())[1].props.footer[0].props.onClick()
+  assert.equal(hooks.seen.state.confirmOpen, false)
+  assert.equal(hooks.seen.state.quit, 'idle')
+  assert.equal(hooks.seen.state.open, true, 'the panel is still open')
+
+  dialogs(render())[1].props.onClose()
+  assert.equal(hooks.seen.state.confirmOpen, false)
+})
+
+test('an untouched confirmation dismisses itself after the window', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { render, hooks } = mountAction({ ...baseState(), open: true, keep: readyKeep(false), confirmOpen: true })
+  render()
+  const opens = hooks.seen.effects.filter((entry) => Array.isArray(entry.deps) && entry.deps[0] === true)
+  const dismiss = opens.at(-1)
+  assert.ok(dismiss, 'a confirmation must schedule its own dismissal')
+  dismiss.fn()
+  t.mock.timers.tick(5000)
+  assert.equal(hooks.seen.state.confirmOpen, false, 'five idle seconds close it')
+})
+
+test('confirming the dialog posts the quit request and keeps the dialog while closing', async () => {
   const calls = []
   const reloads = []
   globalThis.window = {
@@ -364,44 +408,37 @@ test('quitting asks once inline, then posts the quit request', async () => {
     calls.push({ url, init })
     return Promise.resolve({ ok: true, status: 200 })
   }
-  const { render, hooks } = mountAction({ open: true, keep: readyKeep(false), quit: 'idle' })
-  button(render(), 'quit').props.onClick()
-  assert.equal(hooks.seen.state.quit, 'confirm')
-  assert.deepEqual(calls, [], 'the first press only asks')
-
-  const confirm = button(render(), 'quitConfirmAction')
-  assert.ok(confirm)
-  confirm.props.onClick()
+  const { render, hooks } = mountAction({ ...baseState(), open: true, keep: readyKeep(false), confirmOpen: true })
+  assert.deepEqual(calls, [], 'opening the confirmation sends nothing')
+  dialogs(render())[1].props.footer[1].props.onClick()
   await tick()
 
   assert.equal(calls.length, 1)
   assert.equal(calls[0].url, '/dsh-hub-utils/quit')
   assert.equal(calls[0].init.method, 'POST')
   assert.equal(calls[0].init.headers['x-dsh-hub-utils'], 'quit')
-  assert.deepEqual(reloads, [], 'the reload waits for the instance to leave')
   assert.equal(hooks.seen.state.quit, 'closing')
+  assert.equal(hooks.seen.state.confirmOpen, true, 'the dialog shows the closing state')
+  assert.deepEqual(reloads, [], 'the reload waits for the instance to leave')
 })
 
-test('cancelling the inline quit changes nothing', () => {
-  const { render, hooks } = mountAction({ open: true, keep: readyKeep(false), quit: 'confirm' })
-  button(render(), 'cancel').props.onClick()
-  assert.equal(hooks.seen.state.quit, 'idle')
-})
-
-test('a refused quit request asks for a reload instead of pretending to close', async () => {
+test('a refused quit closes the dialog and asks for a reload', async () => {
   globalThis.fetch = () => Promise.resolve({ ok: false, status: 401 })
-  const { render, hooks } = mountAction({ open: true, keep: readyKeep(false), quit: 'confirm' })
-  button(render(), 'quitConfirmAction').props.onClick()
+  const { render, hooks } = mountAction({ ...baseState(), open: true, keep: readyKeep(false), confirmOpen: true })
+  dialogs(render())[1].props.footer[1].props.onClick()
   await tick()
   assert.equal(hooks.seen.state.quit, 'denied')
+  assert.equal(hooks.seen.state.confirmOpen, false)
   assert.ok(button(render(), 'reload'))
 })
 
-test('a failed quit offers retry without closing the panel', async () => {
+test('a failed quit closes the dialog and offers retry', async () => {
   globalThis.fetch = () => Promise.resolve({ ok: false, status: 500 })
-  const { render, hooks } = mountAction({ open: true, keep: readyKeep(false), quit: 'confirm' })
-  button(render(), 'quitConfirmAction').props.onClick()
+  const { render, hooks } = mountAction({ ...baseState(), open: true, keep: readyKeep(false), confirmOpen: true })
+  dialogs(render())[1].props.footer[1].props.onClick()
   await tick()
   assert.equal(hooks.seen.state.quit, 'failed')
+  assert.equal(hooks.seen.state.confirmOpen, false)
   assert.match(text(render()), /quitFailed/)
+  assert.ok(button(render(), 'retry'))
 })

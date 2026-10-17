@@ -32,9 +32,11 @@ with two sections:
 1. **Keep this instance running** — a switch. The panel reads the real state from
    the hub when it opens, so a reload shows the truth rather than a guessed
    default. The switch resets to off when the instance is replaced.
-2. **Quit this instance** — a destructive button. The first press asks inline
-   (Cancel / Quit); confirming posts the quit request, then the page reloads into
-   a fresh instance after a short delay.
+2. **Quit this instance** — a destructive button. It opens a **second dialog on
+   top of the panel** (Cancel / Quit). Escape, the mask, or five seconds without
+   an answer dismiss it; confirming posts the quit request, and the page reloads
+   into a fresh instance after a short delay. dsh's modal layer stacks dialogs
+   and gives the top one Escape and focus, so the panel underneath stays put.
 
 Keep-alive only appears under dsh-hub: a bare `dsh web` answers the hub route
 with a non-JSON response, and the panel says so. Quit works under any launcher
