@@ -44,15 +44,11 @@ window.__ModuleLoader__.load({
     /** How long the quit confirmation waits before dismissing itself untouched. */
     var CONFIRM_WINDOW_MS = 5000
 
-    /** The theme's error colour, so the quit action reads as destructive without hardcoding a palette. */
-    var DANGER_COLOR = 'var(--dsw-alias-state-error-primary, #ec1313)'
-
     var stack = { display: 'flex', flexDirection: 'column', gap: '20px' }
     var section = { display: 'flex', flexDirection: 'column', gap: '10px' }
     var row = { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px' }
     var titleStyle = { color: 'var(--dsw-alias-label-primary, #0f1115)', fontSize: '14px', fontWeight: 600 }
     var bodyStyle = { color: 'var(--dsw-alias-label-tertiary, #81858c)', fontSize: '13px', lineHeight: 1.6 }
-    var dividerStyle = { height: '1px', background: 'var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.1))' }
 
     /** English copy. */
     var en = {
@@ -60,6 +56,7 @@ window.__ModuleLoader__.load({
       panelTitle: 'dsh-hub settings',
       keepTitle: 'Keep running when idle',
       keepBody: 'Enabled: dsh-hub keeps this Harness instance running after you close the page. Disabled: this Harness will be stopped when idle and a fresh one starts on your next visit.',
+      keepHelpLabel: 'About keep-alive',
       loading: 'Reading the current setting…',
       keepOn: 'This instance keeps running after the page closes.',
       keepOff: 'An idle instance is stopped after the page closes.',
@@ -67,8 +64,6 @@ window.__ModuleLoader__.load({
       keepFailed: 'Could not read the keep-alive setting.',
       saveFailed: 'Could not save the setting. Try again.',
       retry: 'Retry',
-      quitTitle: 'Quit this instance',
-      quitBody: 'The instance exits. Unsaved work in running tasks is lost.',
       quit: 'Quit',
       quitDialogTitle: 'Quit this instance?',
       quitDialogBody: 'The instance exits. Unsaved work in running tasks is lost.',
@@ -87,6 +82,7 @@ window.__ModuleLoader__.load({
       panelTitle: 'dsh-hub 设置',
       keepTitle: '保持活跃',
       keepBody: '开启：即使关闭页面，dsh-hub 也会维持当前Harness实例的运行。关闭：当前Harness实例空闲时会被回收，下次访问时再启动一个新实例。',
+      keepHelpLabel: '关于保持活跃',
       loading: '正在读取当前设置…',
       keepOn: '关闭页面后，这个实例会继续运行。',
       keepOff: '关闭页面后，空闲实例会被回收。',
@@ -94,8 +90,6 @@ window.__ModuleLoader__.load({
       keepFailed: '无法读取保持活跃设置。',
       saveFailed: '无法保存设置，请重试。',
       retry: '重试',
-      quitTitle: '退出当前实例',
-      quitBody: '实例会退出。正在运行的任务中未保存的内容会丢失。',
       quit: '退出',
       quitDialogTitle: '要退出当前实例吗？',
       quitDialogBody: '实例会退出。正在运行的任务中未保存的内容会丢失。',
@@ -231,9 +225,23 @@ window.__ModuleLoader__.load({
               : keep.keepAlive ? t('keepOn') : t('keepOff')
       var keepSection = jsxs('div', { style: section, children: [
         jsxs('div', { style: row, children: [
-          jsxs('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' }, children: [
+          jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' }, children: [
             jsx('div', { style: titleStyle, children: t('keepTitle') }),
-            jsx('div', { style: bodyStyle, children: t('keepBody') }),
+            jsx(primitives.Tooltip, {
+              // Portal: the dialog's stacking context caps an in-flow bubble
+              // below its own layer; the portaled bubble sits above every modal.
+              portal: true,
+              side: 'top',
+              maxWidth: 280,
+              label: t('keepBody'),
+              children: jsx('span', {
+                tabIndex: 0,
+                role: 'img',
+                'aria-label': t('keepHelpLabel'),
+                style: { display: 'inline-flex', color: 'var(--dsw-alias-label-tertiary, #81858c)', cursor: 'help' },
+                children: jsx(primitives.IconQuestionOutlineRegular, {}),
+              }),
+            }),
           ] }),
           keep.phase === 'ready'
             ? jsx(primitives.Switch, {
@@ -250,30 +258,13 @@ window.__ModuleLoader__.load({
           : null,
       ] })
 
-      var quitSection = jsxs('div', { style: section, children: [
-        jsx('div', { style: titleStyle, children: t('quitTitle') }),
-        jsx('div', { style: bodyStyle, children: current.quit === 'denied' ? t('denied') : t('quitBody') }),
-        current.quit === 'failed' ? jsx('div', { style: bodyStyle, children: t('quitFailed') }) : null,
-        current.quit === 'closing' ? jsx('div', { style: bodyStyle, children: t('closing') }) : null,
-        current.quit === 'denied'
-          ? jsx(primitives.Button, {
-            variant: 'primary',
-            size: 'sm',
-            onClick: function () { window.location.reload() },
-            children: t('reload'),
-          })
-          : jsx(primitives.Button, {
-            variant: 'primary',
-            size: 'sm',
-            disabled: current.quit === 'closing',
-            icon: jsx('span', {
-              style: { display: 'inline-flex', color: DANGER_COLOR },
-              children: jsx(primitives.IconStopFillRegular, {}),
-            }),
-            onClick: openConfirm,
-            children: current.quit === 'failed' ? t('retry') : t('quit'),
-          }),
-      ] })
+      var quitLabel = current.quit === 'closing' ? t('closing')
+        : current.quit === 'denied' ? t('reload')
+          : current.quit === 'failed' ? t('retry')
+            : t('quit')
+      var quitClick = current.quit === 'denied'
+        ? function () { window.location.reload() }
+        : openConfirm
 
       var button = jsx(primitives.Button, {
         key: 'action',
@@ -293,17 +284,26 @@ window.__ModuleLoader__.load({
         onClose: close,
         title: t('panelTitle'),
         closeLabel: t('close'),
-        footer: jsx(primitives.Button, { variant: 'ghost', onClick: close, children: t('close') }),
+        // The quit action takes the footer seat, styled like the removed close
+        // button but in the theme's error colour; the header close button closes.
+        footer: jsx(primitives.Button, {
+          variant: 'ghost',
+          className: 'dsh-hub-utils-danger',
+          disabled: current.quit === 'closing',
+          onClick: quitClick,
+          children: quitLabel,
+        }),
         children: jsxs('div', { style: stack, children: [
           keepSection,
-          jsx('div', { style: dividerStyle, 'aria-hidden': true }),
-          quitSection,
+          current.quit === 'failed' ? jsx('div', { style: bodyStyle, children: t('quitFailed') }) : null,
+          current.quit === 'denied' ? jsx('div', { style: bodyStyle, children: t('denied') }) : null,
         ] }),
       })
       // A second dialog on top of the panel; the modal layer stacks it, gives it
       // Escape and focus, and returns focus to the panel when it closes.
       var confirmDialog = jsxs(primitives.Modal, {
         key: 'quit-confirm',
+        className: 'dsh-hub-utils-confirm',
         open: current.confirmOpen,
         onClose: cancelConfirm,
         title: t('quitDialogTitle'),
@@ -313,7 +313,8 @@ window.__ModuleLoader__.load({
           jsx(primitives.Button, { key: 'cancel', variant: 'ghost', onClick: cancelConfirm, children: t('cancel') }),
           jsx(primitives.Button, {
             key: 'confirm',
-            variant: 'primary',
+            variant: 'ghost',
+            className: 'dsh-hub-utils-danger',
             disabled: current.quit === 'closing',
             onClick: quit,
             children: current.quit === 'closing' ? t('closing') : t('quitConfirmAction'),
@@ -324,10 +325,30 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * dsh-hub-utils styles: the quit confirmation's title is bold, which the
+     * shell's default modal title is not. Scoped to the dialog class passed in.
+     * @returns a disposer removing the injected rule.
+     */
+    function installStyles() {
+      if (typeof document === 'undefined') return function () {}
+      var style = document.createElement('style')
+      style.textContent = [
+        '.dsh-hub-utils-confirm h2 { font-weight: 700; }',
+        // Filled danger button: the doubled class outranks the primitive's
+        // variant/hover rules, so the red fill survives the ghost variant.
+        '.dsh-hub-utils-danger.dsh-hub-utils-danger { background: var(--dsw-static-red-600, #ec1313); color: #fff; }',
+        '.dsh-hub-utils-danger.dsh-hub-utils-danger:hover { background: color-mix(in srgb, var(--dsw-static-red-600, #ec1313) 86%, #000); }',
+      ].join('\n')
+      document.head.appendChild(style)
+      return function () { style.remove() }
+    }
+
+    /**
      * Mount the sidebar action and its dictionaries.
      * @param ctx - the browser plugin context.
      */
     function apply(ctx) {
+      ctx.effect(installStyles, 'dsh-hub-utils: styles')
       ctx.effect(function () { return ctx.locale.register(NS, { en: en, zh: zh }) }, 'dsh-hub-utils: dictionaries')
       ctx.effect(function () {
         return ctx.slots.inject('sidebar.footer.action', function () {

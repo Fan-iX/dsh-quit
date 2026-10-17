@@ -26,17 +26,20 @@ From then on the panel is how the instance is pinned or restarted.
 
 ## Use
 
-The sidebar foot gains a sliders button labelled **dsh-hub**. It opens a dialog
-with two sections:
+The sidebar foot gains a sliders button labelled **dsh-hub**. It opens a dialog:
 
-1. **Keep this instance running** — a switch. The panel reads the real state from
-   the hub when it opens, so a reload shows the truth rather than a guessed
-   default. The switch resets to off when the instance is replaced.
-2. **Quit this instance** — a destructive button. It opens a **second dialog on
-   top of the panel** (Cancel / Quit). Escape, the mask, or five seconds without
-   an answer dismiss it; confirming posts the quit request, and the page reloads
-   into a fresh instance after a short delay. dsh's modal layer stacks dialogs
-   and gives the top one Escape and focus, so the panel underneath stays put.
+1. **Keep running when idle** — a switch, with a `?` icon beside the title whose
+   tooltip carries the full explanation (portaled, so it renders above the
+   dialog); the on/off caption stays under the switch. The panel reads the real
+   state from the hub when it opens, so a reload shows the truth rather than a
+   guessed default. The switch resets to off when the instance is replaced.
+2. **Quit** — a filled red footer button with white text, taking the seat the old
+   Close button used (the header close button is now the only close). It opens a
+   **second dialog on top of the panel** (Cancel / a red Quit) whose title is
+   bold. Escape, the mask, or five seconds without an answer dismiss it;
+   confirming posts the quit request, and the page reloads into a fresh instance
+   after a short delay. dsh's modal layer stacks dialogs and gives the top one
+   Escape and focus, so the panel underneath stays put.
 
 Keep-alive only appears under dsh-hub: a bare `dsh web` answers the hub route
 with a non-JSON response, and the panel says so. Quit works under any launcher

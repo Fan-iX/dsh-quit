@@ -153,6 +153,8 @@ const stubRequire = (specifier) => {
       Button: 'Button',
       Modal: 'Modal',
       Switch: 'Switch',
+      Tooltip: 'Tooltip',
+      IconQuestionOutlineRegular: 'IconQuestionOutlineRegular',
       IconSlidersTwoOutlineRegular: 'IconSlidersTwoOutlineRegular',
       IconStopFillRegular: 'IconStopFillRegular',
     }
@@ -204,7 +206,7 @@ const mountAction = (initial) => {
   return { component, hooks, render: (props = {}) => component({ t: (key) => key, wide: true, ...props }) }
 }
 
-/** Visit every element node in a render tree. */
+/** Visit every element node in a render tree, including a modal's footer prop. */
 const walk = (node, visit) => {
   if (node === null || node === undefined) return
   if (typeof node !== 'object') return
@@ -212,6 +214,7 @@ const walk = (node, visit) => {
   const children = node.props?.children
   if (Array.isArray(children)) children.forEach((child) => walk(child, visit))
   else walk(children, visit)
+  if (node.props?.footer !== undefined) walk(node.props.footer, visit)
 }
 
 const findAll = (tree, type) => {
@@ -299,9 +302,23 @@ test('the panel carries the keep-alive and quit controls', () => {
   assert.equal(panel.props.open, true)
   assert.equal(panel.props.title, 'panelTitle')
   assert.equal(find(tree, 'Switch').props.checked, true)
-  assert.ok(button(tree, 'quit'), 'the quit action sits in the same panel')
   assert.match(text(tree), /keepTitle/)
-  assert.match(text(tree), /quitTitle/)
+  assert.match(text(tree), /keepOn/, 'the on/off caption survives')
+  assert.equal(button(tree, 'close'), undefined, 'the footer close button is gone')
+
+  const quit = button(tree, 'quit')
+  assert.ok(quit, 'the quit action takes the footer seat')
+  assert.equal(quit.props.variant, 'ghost', "the badge geometry stays the primitive's")
+  assert.equal(quit.props.className, 'dsh-hub-utils-danger', 'filled red with white text')
+  assert.equal(quit.props.icon.props.children.type, 'IconStopFillRegular')
+  assert.equal(quit.props.icon.props.style.color, '#fff')
+
+  const help = find(tree, 'Tooltip')
+  assert.ok(help, 'the explanation moves into a tooltip')
+  assert.equal(help.props.portal, true, 'the bubble must escape the dialog stacking context')
+  assert.equal(help.props.label, 'keepBody')
+  assert.equal(help.props.children.props.children.type, 'IconQuestionOutlineRegular')
+  assert.equal(help.props.children.props['aria-label'], 'keepHelpLabel')
 })
 
 test('the keep-alive switch posts the opposite state as JSON', async () => {
@@ -367,11 +384,20 @@ test('the quit action opens a second dialog stacked above the panel', () => {
   assert.equal(stack.length, 2, 'the confirmation is a second dialog, not an inline row')
   assert.equal(stack[0].props.open, true, 'the panel stays open underneath')
   assert.equal(stack[1].props.open, true)
+  assert.equal(stack[1].props.className, 'dsh-hub-utils-confirm')
   assert.equal(stack[1].props.title, 'quitDialogTitle')
   assert.equal(stack[1].props.description, 'quitDialogBody')
   const [cancel, confirm] = stack[1].props.footer
   assert.equal(cancel.props.children, 'cancel')
   assert.equal(confirm.props.children, 'quitConfirmAction')
+  assert.equal(confirm.props.className, 'dsh-hub-utils-danger', 'both danger buttons share the red fill')
+})
+
+test('the confirmation title is bold and the danger buttons are filled red', () => {
+  assert.match(source, /\.dsh-hub-utils-confirm h2 \{ font-weight: 700; \}/)
+  assert.match(source, /\.dsh-hub-utils-danger\.dsh-hub-utils-danger \{ background: var\(--dsw-static-red-600, #ec1313\); color: #fff; \}/)
+  const seen = mountAction(baseState())
+  assert.ok(seen.component)
 })
 
 test('cancelling or Escape on the confirmation leaves the panel untouched', () => {
