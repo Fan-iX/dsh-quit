@@ -1,5 +1,10 @@
-// Browser half of dsh-hub-utils: one settings section that pins this dsh
-// instance so dsh-hub does not reap it while the page is closed.
+// Browser half of dsh-hub-utils: one sidebar action that opens a small control
+// panel for the current instance. The panel carries two actions:
+//
+//   - Keep alive: asks dsh-hub not to reap this instance while the page is
+//     closed (the hub's /hub/api/keepalive route).
+//   - Quit: asks the host launcher for a bounded exit (this package's own
+//     /dsh-hub-utils/quit route, served by the host half).
 //
 // Hand-written rather than built — the `clientBundle` tsdown preset is not part
 // of the published SDK, so this file is already in the runtime's dynamic-bundle
@@ -8,10 +13,10 @@
 // one synchronous chunk and does not resolve siblings. There is no JSX, because
 // nothing compiles it.
 //
-// The exchange is deliberately a plain same-origin fetch: the page is served by
-// dsh-hub, so a relative path reaches the hub's keep-alive route with the hub
-// session cookie attached. That route answers JSON only when the instance really
-// runs under dsh-hub, which is how this section tells a bare `dsh web` apart.
+// The keep-alive exchange is a plain same-origin fetch: the page is served by
+// dsh-hub, so a relative path reaches the hub's route with the hub session
+// cookie attached. That route answers JSON only when the instance really runs
+// under dsh-hub, which is how the panel tells a bare `dsh web` apart.
 window.__ModuleLoader__.load({
   id: 'dsh-hub-utils',
   factory: (require) => {
@@ -26,49 +31,84 @@ window.__ModuleLoader__.load({
     /** Dictionary namespace owned by this browser half. */
     var NS = 'settings.dshHubUtils'
 
-    /** The hub route behind the toggle; see dsh-hub's src/keepalive.mjs. */
-    var API_PATH = '/hub/api/keepalive'
+    /** The hub route behind the keep-alive switch; see dsh-hub's src/keepalive.mjs. */
+    var KEEPALIVE_PATH = '/hub/api/keepalive'
 
-    /** Stack used by every phase, so the section keeps one width. */
-    var stack = { display: 'flex', flexDirection: 'column', gap: '16px', maxWidth: '560px' }
-    var row = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }
-    var titleStyle = { color: 'var(--dsw-alias-label-primary, #0f1115)', fontSize: '15px', fontWeight: 600 }
+    /** The host half's quit route and its required header; see `src/index.js`. */
+    var QUIT_PATH = '/dsh-hub-utils/quit'
+    var QUIT_HEADER = 'x-dsh-hub-utils'
+
+    /** How long the page waits for the instance to leave before reloading into a new one. */
+    var RELOAD_AFTER_MS = 3000
+
+    /** The theme's error colour, so the quit action reads as destructive without hardcoding a palette. */
+    var DANGER_COLOR = 'var(--dsw-alias-state-error-primary, #ec1313)'
+
+    var stack = { display: 'flex', flexDirection: 'column', gap: '20px' }
+    var section = { display: 'flex', flexDirection: 'column', gap: '10px' }
+    var row = { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px' }
+    var titleStyle = { color: 'var(--dsw-alias-label-primary, #0f1115)', fontSize: '14px', fontWeight: 600 }
     var bodyStyle = { color: 'var(--dsw-alias-label-tertiary, #81858c)', fontSize: '13px', lineHeight: 1.6 }
+    var dividerStyle = { height: '1px', background: 'var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.1))' }
 
     /** English copy. */
     var en = {
-      nav: 'dsh-hub',
-      title: 'Keep this instance running',
-      body: 'When enabled, dsh-hub keeps this instance running after you close the page. When disabled, an idle instance is stopped and a fresh one starts on your next visit.',
+      action: 'dsh-hub settings',
+      panelTitle: 'dsh-hub settings',
+      keepTitle: 'Keep running when idle',
+      keepBody: 'Enabled: dsh-hub keeps this Harness instance running after you close the page. Disabled: this Harness will be stopped when idle and a fresh one starts on your next visit.',
       loading: 'Reading the current setting…',
-      on: 'This instance keeps running after the page closes.',
-      off: 'An idle instance is stopped after the page closes.',
-      unsupported: 'This control is only available when the instance runs under dsh-hub.',
-      failed: 'Could not read the setting.',
-      retry: 'Retry',
+      keepOn: 'This instance keeps running after the page closes.',
+      keepOff: 'An idle instance is stopped after the page closes.',
+      unsupported: 'Keep-alive is only available when the instance runs under dsh-hub.',
+      keepFailed: 'Could not read the keep-alive setting.',
       saveFailed: 'Could not save the setting. Try again.',
+      retry: 'Retry',
+      quitTitle: 'Quit this instance',
+      quitBody: 'The instance exits. Unsaved work in running tasks is lost.',
+      quit: 'Quit',
+      quitConfirm: 'Quit this instance? Running tasks will be lost.',
+      quitConfirmAction: 'Quit',
+      cancel: 'Cancel',
+      closing: 'Quitting…',
+      quitFailed: 'The quit request failed.',
+      denied: 'Session expired. Reload to sign in again.',
+      reload: 'Reload',
+      close: 'Close',
     }
 
     /** Simplified Chinese copy. */
     var zh = {
-      nav: 'dsh-hub',
-      title: '保持实例运行',
-      body: '开启后，即使关闭页面，dsh-hub 也会维持这个实例的运行。关闭时，空闲实例会被回收，下次访问时再启动一个新实例。',
+      action: 'dsh-hub 设置',
+      panelTitle: 'dsh-hub 设置',
+      keepTitle: '保持活跃',
+      keepBody: '开启：即使关闭页面，dsh-hub 也会维持当前Harness实例的运行。关闭：当前Harness实例空闲时会被回收，下次访问时再启动一个新实例。',
       loading: '正在读取当前设置…',
-      on: '关闭页面后，这个实例会继续运行。',
-      off: '关闭页面后，空闲实例会被回收。',
-      unsupported: '此控件仅在实例运行于 dsh-hub 之下时可用。',
-      failed: '无法读取设置。',
-      retry: '重试',
+      keepOn: '关闭页面后，这个实例会继续运行。',
+      keepOff: '关闭页面后，空闲实例会被回收。',
+      unsupported: '保持活跃仅在实例运行于 dsh-hub 之下时可用。',
+      keepFailed: '无法读取保持活跃设置。',
       saveFailed: '无法保存设置，请重试。',
+      retry: '重试',
+      quitTitle: '退出当前实例',
+      quitBody: '实例会退出。正在运行的任务中未保存的内容会丢失。',
+      quit: '退出',
+      quitConfirm: '要退出当前实例吗？正在运行的任务会丢失。',
+      quitConfirmAction: '确认退出',
+      cancel: '取消',
+      closing: '正在退出…',
+      quitFailed: '退出请求失败。',
+      denied: '会话已失效，请刷新后重新登录。',
+      reload: '刷新',
+      close: '关闭',
     }
 
     /**
      * Read the hub's current keep-alive state.
      * @returns a promise of `{ supported: false }` outside dsh-hub, or the state.
      */
-    function readState() {
-      return fetch(API_PATH, {
+    function readKeepAlive() {
+      return fetch(KEEPALIVE_PATH, {
         method: 'GET',
         headers: { accept: 'application/json' },
         cache: 'no-store',
@@ -76,19 +116,24 @@ window.__ModuleLoader__.load({
         var json = /application\/json/i.test(response.headers.get('content-type') || '')
         if (!response.ok || !json) return { supported: false }
         return response.json().then(function (body) {
-          return { supported: true, keepAlive: body.keepAlive === true, running: body.running === true }
+          return { supported: true, keepAlive: body.keepAlive === true }
         })
       })
     }
 
     /**
-     * The settings section.
-     * @param props - the section's render props, carrying the `t` seat.
-     * @returns the section content for the current phase.
+     * The sidebar action and its panel.
+     * @param props - the sidebar's column state and the page's copy.
+     * @returns the button and, while open, the panel dialog.
      */
-    function HubSection(props) {
+    function HubPanelAction(props) {
       var t = props.t
-      var state = react.useState({ phase: 'loading', keepAlive: false, running: false, busy: false, failed: false })
+      var wide = props.wide === true
+      var state = react.useState({
+        open: false,
+        keep: { phase: 'loading', keepAlive: false, busy: false, failed: false },
+        quit: 'idle',
+      })
       var current = state[0]
       var setCurrent = state[1]
       var alive = react.useRef(true)
@@ -97,24 +142,35 @@ window.__ModuleLoader__.load({
         return function () { alive.current = false }
       }, [])
 
-      var load = function () {
-        setCurrent(function (prev) { return Object.assign({}, prev, { phase: 'loading', failed: false }) })
-        readState().then(function (next) {
-          if (!alive.current) return
-          if (!next.supported) {
-            setCurrent({ phase: 'unsupported', keepAlive: false, running: false, busy: false, failed: false })
-            return
-          }
-          setCurrent({ phase: 'ready', keepAlive: next.keepAlive, running: next.running, busy: false, failed: false })
-        }).catch(function () {
-          if (alive.current) setCurrent({ phase: 'error', keepAlive: false, running: false, busy: false, failed: false })
+      var update = function (patch) {
+        setCurrent(function (prev) { return Object.assign({}, prev, patch) })
+      }
+      var updateKeep = function (patch) {
+        setCurrent(function (prev) {
+          return Object.assign({}, prev, { keep: Object.assign({}, prev.keep, patch) })
         })
       }
-      react.useEffect(load, [])
+
+      var load = function () {
+        updateKeep({ phase: 'loading', failed: false })
+        readKeepAlive().then(function (next) {
+          if (!alive.current) return
+          if (!next.supported) { updateKeep({ phase: 'unsupported', keepAlive: false }); return }
+          updateKeep({ phase: 'ready', keepAlive: next.keepAlive })
+        }).catch(function () {
+          if (alive.current) updateKeep({ phase: 'error' })
+        })
+      }
+      // Read the real state on open, so the panel never renders a guessed value.
+      react.useEffect(function () {
+        if (!current.open) return undefined
+        load()
+        return undefined
+      }, [current.open])
 
       var toggle = function (next) {
-        setCurrent(function (prev) { return Object.assign({}, prev, { busy: true, failed: false }) })
-        fetch(API_PATH, {
+        updateKeep({ busy: true, failed: false })
+        fetch(KEEPALIVE_PATH, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ keepAlive: next }),
@@ -124,61 +180,165 @@ window.__ModuleLoader__.load({
           return response.json()
         }).then(function (body) {
           if (!alive.current) return
-          setCurrent({ phase: 'ready', keepAlive: body.keepAlive === true, running: body.running === true, busy: false, failed: false })
+          updateKeep({ phase: 'ready', keepAlive: body.keepAlive === true, busy: false, failed: false })
         }).catch(function () {
-          if (alive.current) setCurrent(function (prev) { return Object.assign({}, prev, { busy: false, failed: true }) })
+          if (alive.current) updateKeep({ busy: false, failed: true })
         })
       }
 
-      var heading = jsxs('div', { style: row, children: [
-        jsx('div', { style: titleStyle, children: t('title') }),
-        current.phase === 'ready'
-          ? jsx(primitives.Switch, {
-            checked: current.keepAlive,
-            disabled: current.busy,
-            label: t('title'),
-            onChange: toggle,
+      var quit = function () {
+        update({ quit: 'closing' })
+        var headers = {}
+        headers[QUIT_HEADER] = 'quit'
+        fetch(QUIT_PATH, { method: 'POST', headers: headers, cache: 'no-store' })
+          .then(function (response) {
+            if (!response.ok) {
+              var refused = response.status === 401 || response.status === 403
+              var error = new Error('HTTP ' + String(response.status))
+              error.refused = refused
+              throw error
+            }
+            setTimeout(function () { window.location.reload() }, RELOAD_AFTER_MS)
           })
-          : null,
-      ] })
-      var description = jsx('div', { style: bodyStyle, children: t('body') })
-
-      if (current.phase === 'loading' || current.phase === 'unsupported' || current.phase === 'error') {
-        var message = current.phase === 'loading' ? t('loading')
-          : current.phase === 'unsupported' ? t('unsupported')
-            : t('failed')
-        var retry = current.phase === 'error'
-          ? jsx(primitives.Button, { variant: 'ghost', size: 'sm', onClick: load, children: t('retry') })
-          : null
-        return jsxs('div', { style: stack, children: [heading, description, jsx('div', { style: bodyStyle, children: message }), retry] })
+          .catch(function (error) {
+            update({ quit: error && error.refused === true ? 'denied' : 'failed' })
+          })
       }
 
-      var caption = current.failed ? t('saveFailed') : (current.keepAlive ? t('on') : t('off'))
-      return jsxs('div', { style: stack, children: [heading, description, jsx('div', { style: bodyStyle, children: caption })] })
+      var close = function () { update({ open: false, quit: 'idle' }) }
+      var open = function () { update({ open: true }) }
+
+      var keep = current.keep
+      var keepCaption = keep.phase === 'loading' ? t('loading')
+        : keep.phase === 'unsupported' ? t('unsupported')
+          : keep.phase === 'error' ? t('keepFailed')
+            : keep.failed ? t('saveFailed')
+              : keep.keepAlive ? t('keepOn') : t('keepOff')
+      var keepSection = jsxs('div', { style: section, children: [
+        jsxs('div', { style: row, children: [
+          jsxs('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' }, children: [
+            jsx('div', { style: titleStyle, children: t('keepTitle') }),
+            jsx('div', { style: bodyStyle, children: t('keepBody') }),
+          ] }),
+          keep.phase === 'ready'
+            ? jsx(primitives.Switch, {
+              checked: keep.keepAlive,
+              disabled: keep.busy,
+              label: t('keepTitle'),
+              onChange: toggle,
+            })
+            : null,
+        ] }),
+        jsx('div', { style: bodyStyle, children: keepCaption }),
+        keep.phase === 'error'
+          ? jsx(primitives.Button, { variant: 'ghost', size: 'sm', onClick: load, children: t('retry') })
+          : null,
+      ] })
+
+      var quitSection
+      if (current.quit === 'confirm') {
+        quitSection = jsxs('div', { style: section, children: [
+          jsx('div', { style: titleStyle, children: t('quitTitle') }),
+          jsx('div', { style: bodyStyle, children: t('quitConfirm') }),
+          jsxs('div', { style: { display: 'flex', gap: '8px' }, children: [
+            jsx(primitives.Button, {
+              variant: 'ghost',
+              size: 'sm',
+              onClick: function () { update({ quit: 'idle' }) },
+              children: t('cancel'),
+            }),
+            jsx(primitives.Button, {
+              variant: 'primary',
+              size: 'sm',
+              onClick: quit,
+              children: t('quitConfirmAction'),
+            }),
+          ] }),
+        ] })
+      } else if (current.quit === 'closing') {
+        quitSection = jsxs('div', { style: section, children: [
+          jsx('div', { style: titleStyle, children: t('quitTitle') }),
+          jsx('div', { style: bodyStyle, children: t('closing') }),
+        ] })
+      } else if (current.quit === 'denied') {
+        quitSection = jsxs('div', { style: section, children: [
+          jsx('div', { style: titleStyle, children: t('quitTitle') }),
+          jsx('div', { style: bodyStyle, children: t('denied') }),
+          jsx(primitives.Button, {
+            variant: 'primary',
+            size: 'sm',
+            onClick: function () { window.location.reload() },
+            children: t('reload'),
+          }),
+        ] })
+      } else {
+        var failed = current.quit === 'failed'
+        quitSection = jsxs('div', { style: section, children: [
+          jsx('div', { style: titleStyle, children: t('quitTitle') }),
+          jsx('div', { style: bodyStyle, children: t('quitBody') }),
+          failed ? jsx('div', { style: bodyStyle, children: t('quitFailed') }) : null,
+          jsx(primitives.Button, {
+            variant: 'primary',
+            size: 'sm',
+            icon: jsx('span', {
+              style: { display: 'inline-flex', color: DANGER_COLOR },
+              children: jsx(primitives.IconStopFillRegular, {}),
+            }),
+            onClick: function () { update({ quit: 'confirm' }) },
+            children: failed ? t('retry') : t('quit'),
+          }),
+        ] })
+      }
+
+      var button = jsx(primitives.Button, {
+        key: 'action',
+        variant: 'ghost',
+        size: 'sm',
+        icon: jsx('span', {
+          style: { display: 'inline-flex' },
+          children: jsx(primitives.IconSlidersTwoOutlineRegular, {}),
+        }),
+        'aria-label': t('action'),
+        onClick: open,
+        children: wide ? t('action') : null,
+      })
+      var panel = jsxs(primitives.Modal, {
+        key: 'panel',
+        open: current.open,
+        onClose: close,
+        title: t('panelTitle'),
+        closeLabel: t('close'),
+        footer: jsx(primitives.Button, { variant: 'ghost', onClick: close, children: t('close') }),
+        children: jsxs('div', { style: stack, children: [
+          keepSection,
+          jsx('div', { style: dividerStyle, 'aria-hidden': true }),
+          quitSection,
+        ] }),
+      })
+      return jsxs(jsxRuntime.Fragment, { children: [button, panel] })
     }
 
     /**
-     * Mount the settings section and its dictionaries.
+     * Mount the sidebar action and its dictionaries.
      * @param ctx - the browser plugin context.
      */
     function apply(ctx) {
       ctx.effect(function () { return ctx.locale.register(NS, { en: en, zh: zh }) }, 'dsh-hub-utils: dictionaries')
-      var t = ctx.locale.bind(NS)
       ctx.effect(function () {
-        return ctx.slots.inject('settings.section', function () {
+        return ctx.slots.inject('sidebar.footer.action', function () {
           return ctx.slots.register({
-            name: 'settings.section',
-            id: 'dsh-hub',
-            order: 90,
-            label: function () { return t('nav') },
+            name: 'sidebar.footer.action',
+            id: 'dsh-hub-utils',
             locale: NS,
-          }, HubSection)
+          }, HubPanelAction)
         })
-      }, 'dsh-hub-utils: settings section')
+      }, 'dsh-hub-utils: sidebar action')
     }
 
     exports.NS = NS
-    exports.API_PATH = API_PATH
+    exports.KEEPALIVE_PATH = KEEPALIVE_PATH
+    exports.QUIT_PATH = QUIT_PATH
+    exports.QUIT_HEADER = QUIT_HEADER
     exports.apply = apply
     exports.inject = ['slots', 'locale']
     return module.exports

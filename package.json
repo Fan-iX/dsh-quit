@@ -1,7 +1,7 @@
 {
   "name": "dsh-hub-utils",
   "version": "0.1.0",
-  "description": "dsh-hub controls inside the dsh web UI: pin this instance so it survives closing the page.",
+  "description": "dsh-hub controls inside the dsh web UI: keep this instance running when idle, or quit it.",
   "type": "module",
   "main": "./src/index.js",
   "exports": {
@@ -31,7 +31,7 @@
       "platform": "web",
       "inject": [
         "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-ui-settings"
+        "@deepseek-ai/dsh-client-ui-sidebar"
       ]
     }
   },
