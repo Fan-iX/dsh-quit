@@ -25,8 +25,14 @@ const BASELINE = new Set([
 ])
 
 let registration
-globalThis.window = { __ModuleLoader__: { load: (value) => { registration = value } } }
+globalThis.window = {
+  __ModuleLoader__: { load: (value) => { registration = value } },
+  __DSH_HUB__: { version: 1 },
+}
 await import(pathToFileURL(BUNDLE).href)
+
+// The host half only mounts under a hub-spawned process.
+process.env.DSH_HUB = '1'
 
 // --- the host half ----------------------------------------------------------
 
@@ -76,6 +82,18 @@ test('the host half mounts one exact route at the exported path', () => {
   assert.equal(seen.route.kind, 'exact')
   assert.equal(seen.route.path, QUIT_PATH)
   assert.equal(typeof seen.route.handler, 'function')
+})
+
+test('a bare dsh web registers no quit route', () => {
+  const previous = process.env.DSH_HUB
+  delete process.env.DSH_HUB
+  try {
+    const seen = makeCtx({ appExit: () => {} })
+    hostApply(seen.ctx)
+    assert.equal(seen.route, undefined)
+  } finally {
+    process.env.DSH_HUB = previous
+  }
 })
 
 test('an unauthenticated request is refused the way the index and /api refuse it', () => {
@@ -156,7 +174,6 @@ const stubRequire = (specifier) => {
       Tooltip: 'Tooltip',
       IconQuestionOutlineRegular: 'IconQuestionOutlineRegular',
       IconSlidersTwoOutlineRegular: 'IconSlidersTwoOutlineRegular',
-      IconStopFillRegular: 'IconStopFillRegular',
     }
   }
   throw new Error(`the bundle required an undeclared external: ${specifier}`)
@@ -281,6 +298,27 @@ test('the browser half mounts one action at the sidebar foot', () => {
   assert.deepEqual(face.inject, ['slots', 'locale'])
 })
 
+test('outside dsh-hub the sidebar action is not contributed', () => {
+  const marker = globalThis.window.__DSH_HUB__
+  delete globalThis.window.__DSH_HUB__
+  try {
+    const registrations = []
+    const effects = []
+    registration.factory(stubRequire).apply({
+      locale: { register: () => () => {} },
+      effect: (register) => { effects.push(register); register(); return () => {} },
+      slots: {
+        inject: (name, contribute) => contribute(),
+        register: (options) => { registrations.push(options); return () => {} },
+      },
+    })
+    assert.equal(registrations.length, 0)
+    assert.equal(effects.length, 0, 'no styles, dictionaries, or slot work either')
+  } finally {
+    globalThis.window.__DSH_HUB__ = marker
+  }
+})
+
 test('the action shows the panel icon, its label only when wide, and opens the panel', () => {
   const { render, hooks } = mountAction(baseState())
   const wide = button(render(), 'action')
@@ -310,8 +348,6 @@ test('the panel carries the keep-alive and quit controls', () => {
   assert.ok(quit, 'the quit action takes the footer seat')
   assert.equal(quit.props.variant, 'ghost', "the badge geometry stays the primitive's")
   assert.equal(quit.props.className, 'dsh-hub-utils-danger', 'filled red with white text')
-  assert.equal(quit.props.icon.props.children.type, 'IconStopFillRegular')
-  assert.equal(quit.props.icon.props.style.color, '#fff')
 
   const help = find(tree, 'Tooltip')
   assert.ok(help, 'the explanation moves into a tooltip')
@@ -366,7 +402,7 @@ test('opening the panel reads the keep-alive state from the hub', async () => {
   assert.equal(hooks.seen.state.keep.keepAlive, true)
 })
 
-test('outside dsh-hub the keep-alive row says so, but the quit action stays', () => {
+test('a hub without the keep-alive route still shows the quit action', () => {
   const state = { ...baseState(), open: true, keep: { phase: 'unsupported', keepAlive: false, busy: false, failed: false } }
   const { render } = mountAction(state)
   const tree = render()
@@ -428,6 +464,7 @@ test('confirming the dialog posts the quit request and keeps the dialog while cl
   const reloads = []
   globalThis.window = {
     __ModuleLoader__: globalThis.window.__ModuleLoader__,
+    __DSH_HUB__: { version: 1 },
     location: { reload: () => { reloads.push(true) } },
   }
   globalThis.fetch = (url, init) => {

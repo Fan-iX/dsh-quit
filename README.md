@@ -76,6 +76,11 @@ one `sidebar.footer.action` entry with its own locale namespace, so the panel
 follows the app's language and the host row only exists so the package resolves
 in the loader.
 
+The plugin mounts only under dsh-hub: the hub injects `window.__DSH_HUB__` into
+the page it serves and sets `DSH_HUB=1` in the spawned backend's environment.
+Without those markers (a bare `dsh web`) the browser half contributes nothing and
+the host half registers no quit route.
+
 ## Development
 
 ```sh

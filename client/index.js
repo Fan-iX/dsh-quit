@@ -60,7 +60,7 @@ window.__ModuleLoader__.load({
       loading: 'Reading the current setting…',
       keepOn: 'This instance keeps running after the page closes.',
       keepOff: 'An idle instance is stopped after the page closes.',
-      unsupported: 'Keep-alive is only available when the instance runs under dsh-hub.',
+      unsupported: 'Keep-alive is not available on this dsh-hub build.',
       keepFailed: 'Could not read the keep-alive setting.',
       saveFailed: 'Could not save the setting. Try again.',
       retry: 'Retry',
@@ -86,7 +86,7 @@ window.__ModuleLoader__.load({
       loading: '正在读取当前设置…',
       keepOn: '关闭页面后，这个实例会继续运行。',
       keepOff: '关闭页面后，空闲实例会被回收。',
-      unsupported: '保持活跃仅在实例运行于 dsh-hub 之下时可用。',
+      unsupported: '当前 dsh-hub 版本不支持保持活跃。',
       keepFailed: '无法读取保持活跃设置。',
       saveFailed: '无法保存设置，请重试。',
       retry: '重试',
@@ -343,11 +343,17 @@ window.__ModuleLoader__.load({
       return function () { style.remove() }
     }
 
+    /** True when the page came through dsh-hub, which injects this marker. */
+    function isDshHub() {
+      return typeof window !== 'undefined' && window.__DSH_HUB__ !== undefined
+    }
+
     /**
-     * Mount the sidebar action and its dictionaries.
+     * Mount the sidebar action and its dictionaries, but only under dsh-hub.
      * @param ctx - the browser plugin context.
      */
     function apply(ctx) {
+      if (!isDshHub()) return
       ctx.effect(installStyles, 'dsh-hub-utils: styles')
       ctx.effect(function () { return ctx.locale.register(NS, { en: en, zh: zh }) }, 'dsh-hub-utils: dictionaries')
       ctx.effect(function () {

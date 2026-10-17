@@ -33,6 +33,9 @@ const QUIT_DELAY_MS = 100
  * @param ctx - the plugin context, carrying the web server.
  */
 export function apply(ctx) {
+  // Only a hub-spawned instance exposes the quit route; a bare `dsh web` keeps
+  // its original surface. The hub sets this marker in the spawned environment.
+  if (process.env.DSH_HUB !== '1') return
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: QUIT_PATH,
